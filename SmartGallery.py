@@ -6,7 +6,7 @@
 
 import os
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ExifTags
 
 import shutil
 
@@ -124,6 +124,9 @@ class Application(tkinter.ttk.Frame):
         if not file_paths:
             return
 
+        # Сбрасываем счетчик сетки в 0, чтобы окна всегда начинались с левого верхнего угла
+        self.window_count = 0
+
         if len(file_paths) > 8:
             messagebox.showwarning(
                 "Предупреждение",
@@ -133,11 +136,44 @@ class Application(tkinter.ttk.Frame):
         for file_path in file_paths[:8]:
             self._create_image_window(file_path)
 
+    def _get_exif_summary(self, img):
+        """Извлекает дату съемки, модель камеры и параметры кадра из EXIF"""
+        exif = img.getexif()
+        if not exif:
+            return "EXIF: нет данных"
+
+        # Преобразуем числовые коды тегов в понятные названия
+        data = {ExifTags.TAGS.get(tag, tag): val for tag, val in exif.items()}
+
+        # 1. Дата и время съемки
+        date_str = data.get("DateTimeOriginal") or data.get("DateTime")
+        if date_str:
+            # Меняем формат '2026:11:21 19:40:00' на более читаемый '2026-11-21 19:40'
+            date_str = str(date_str).replace(":", "-", 2)[:16]
+
+        # 2. Модель камеры или смартфона
+        model = str(data.get("Model", "")).strip()
+
+        # 3. Параметры съемки (ISO и выдержка)
+        iso = data.get("ISOSpeedRatings")
+        exp = data.get("ExposureTime")
+        settings = []
+        if iso:
+            settings.append(f"ISO {iso}")
+        if exp:
+            # Если выдержка меньше 1 сек (например, 0.005), переводим в дробь 1/200
+            exp_str = f"1/{round(1 / exp)}с" if 0 < exp < 1 else f"{exp}с"
+            settings.append(exp_str)
+
+        # Собираем всё в компактную строку
+        parts = [p for p in [date_str, model, ", ".join(settings)] if p]
+        return f"EXIF: {' | '.join(parts)}" if parts else "EXIF: базовые теги"
+
     def _create_image_window(self, file_path):
         new_window = Toplevel()
         new_window.title(os.path.basename(file_path))
 
-        # --- НАСТРОЙКА ПОЗИЦИИ ОКНА (СЕТКА 4x2) ---
+        # --- НАСТРОЙКА ПОЗИЦИИ И РАЗМЕРА ОКНА (СЕТКА 4x2) ---
         if not hasattr(self, "window_count"):
             self.window_count = 0
 
@@ -148,7 +184,7 @@ class Application(tkinter.ttk.Frame):
         row = (self.window_count // cols) % rows
 
         screen_w = new_window.winfo_screenwidth()
-        screen_h = new_window.winfo_screenheight() - 60
+        screen_h = new_window.winfo_screenheight() - 60  # Запас под панель задач снизу
 
         cell_w = screen_w // cols
         cell_h = screen_h // rows
@@ -156,32 +192,42 @@ class Application(tkinter.ttk.Frame):
         x = col * cell_w
         y = row * cell_h
 
-        new_window.geometry(f"+{x}+{y}")
-        self.window_count += 1
-        # -----------------------------------------
+        # Вычитаем толщину системных рамок (16px) и шапки окна (35px), чтобы окна не наезжали друг на друга
+        win_w = cell_w - 16
+        win_h = cell_h - 35
 
-        # 1. Получаем данные и масштабируем фото под ячейку
+        # Задаем И размер (WxH), И координаты (+X+Y)
+        new_window.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        self.window_count += 1
+        # ----------------------------------------------------
+
+        # 1. Получаем данные и подгоняем картинку строго под размер окна
         with Image.open(file_path) as img:
             orig_width, orig_height = img.size
             img_format = img.format
             file_size_kb = round(os.path.getsize(file_path) / 1024, 1)
+            exif_line = self._get_exif_summary(img)  # <-- Читаем EXIF до масштабирования
 
-            max_img_w = max(150, cell_w - 20)
-            max_img_h = max(150, cell_h - 165)
+            # Картинка не выйдет за пределы ширины win_w и оставит место для текста с кнопками (135px)
+            max_img_w = max(100, win_w - 20)
+            max_img_h = max(100, win_h - 155)
 
             img.thumbnail((max_img_w, max_img_h))
             photo = ImageTk.PhotoImage(img)
 
         img_label = Label(new_window, image=photo)
         img_label.image = photo
-        img_label.pack(padx=10, pady=(5, 5))
+        img_label.pack(side="top", expand=True, fill="both", padx=10, pady=(5, 5))
 
         # 2. Информация
-        short_path = file_path if len(file_path) < 38 else "..." + file_path[-35:]
+        file_name = os.path.basename(file_path)
+        short_file_name = file_name if len(file_name) < 75 else "..." + file_name[-72:]
+        short_path = file_path if len(file_path) < 75 else "..." + file_path[-72:]
         info_text = (
-            f"Файл: {os.path.basename(file_path)}\n"
+            f"Файл: {short_file_name}\n"
             f"Путь: {short_path}\n"
-            f"Размер: {orig_width}×{orig_height} px | {img_format} | {file_size_kb} КБ"
+            f"Размер: {orig_width}×{orig_height} px | {img_format} | {file_size_kb} КБ\n"
+            f"{exif_line}"
         )
 
         info_label = Label(
@@ -190,7 +236,8 @@ class Application(tkinter.ttk.Frame):
             font=("Arial", 8),
             fg="#222222",
             justify="left",
-            anchor="w"
+            anchor="w",
+            wraplength = win_w - 25
         )
         info_label.pack(fill="x", padx=10, pady=(0, 5))
 
@@ -216,7 +263,7 @@ class Application(tkinter.ttk.Frame):
 
         # 4. Кнопки
         btn_frame = Frame(new_window)
-        btn_frame.pack(fill="x", padx=10, pady=(0, 8))
+        btn_frame.pack(side="bottom", fill="x", padx=10, pady=(0, 8))
 
         Button(btn_frame, text="Переместить", command=move_file, font=("Arial", 8), width=11).pack(side="left",
                                                                                                    padx=(0, 3))
@@ -226,93 +273,7 @@ class Application(tkinter.ttk.Frame):
 
 
 
-    def open_image_in_new_window_v1(self, evt=None):
-        file_path = filedialog.askopenfilename(
-            filetypes=(("Изображения", "*.jpg;*.jpeg;*.png"), ("Все файлы", "*.*"))
-        )
-        if not file_path:
-            return
 
-        new_window = Toplevel()
-
-        # В заголовок лучше вывести только имя файла
-        # new_window.title(file_path)
-        new_window.title(os.path.basename(file_path))
-
-
-        # 1. Открываем фото и сразу собираем информацию об оригинале
-        img = Image.open(file_path)
-
-        orig_width, orig_height = img.size
-        img_format = img.format
-        img_mode = img.mode  # Цветовая модель (RGB, RGBA, L и т.д.)
-        file_size_kb = round(os.path.getsize(file_path) / 1024, 1)
-
-        # 2. Масштабируем для отображения
-        img.thumbnail((800, 600))
-        photo = ImageTk.PhotoImage(img)
-
-        # 3. Выводим картинку
-        label = Label(new_window, image=photo)
-        label.image = photo  # Обязательно сохраняем ссылку, иначе картинка пропадет!
-        label.pack(padx=10, pady=10)
-
-        # 3. Формируем многострочный текст с помощью \n
-        info_text = (
-            f"Имя файла: {os.path.basename(file_path)}\n"
-            f"Путь: {file_path}\n"
-            f"Разрешение: {orig_width} × {orig_height} px\n"
-            f"Формат и цвет: {img_format} ({img_mode})\n"
-            f"Размер на диске: {file_size_kb} КБ"
-        )
-
-        # 4. Выводим текст: justify выравнивает строки между собой, anchor прижимает блок влево
-        info_label = Label(
-            new_window,
-            text=info_text,
-            font=("Arial", 10),
-            fg="#222222",
-            justify="left",  # Выравнивание текста внутри блока по левому краю
-            anchor="w"  # Привязка самого текста к левой границе виджета
-        )
-        # fill="x" растягивает виджет на всю ширину окна, чтобы anchor="w" сработал
-        info_label.pack(fill="x", padx=15, pady=(5, 15))
-
-        # 4. Функции-обработчики для кнопок
-        def move_file():
-            # Открываем выбор новой папки (parent=new_window чтобы диалог не прятался за окном)
-            target_dir = filedialog.askdirectory(title="Выберите папку для перемещения", parent=new_window)
-            if not target_dir:
-                return
-            try:
-                new_path = os.path.join(target_dir, os.path.basename(file_path))
-                shutil.move(file_path, new_path)
-                messagebox.showinfo("Готово", f"Файл перемещен в:\n{target_dir}", parent=new_window)
-                new_window.destroy()  # Закрываем окно после перемещения
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось переместить файл:\n{e}", parent=new_window)
-
-        def delete_file():
-            # Спрашиваем подтверждение перед удалением
-            confirm = messagebox.askyesno(
-                "Подтверждение",
-                f"Точно удалить файл навсегда?\n{os.path.basename(file_path)}",
-                parent=new_window
-            )
-            if confirm:
-                try:
-                    os.remove(file_path)
-                    new_window.destroy()  # Закрываем окно после удаления
-                except Exception as e:
-                    messagebox.showerror("Ошибка", f"Не удалось удалить файл:\n{e}", parent=new_window)
-
-        # 5. Контейнер (Frame) для кнопок, чтобы они встали в одну линию
-        btn_frame = Frame(new_window)
-        btn_frame.pack(fill="x", padx=15, pady=(5, 15))
-
-        Button(btn_frame, text="Переместить", command=move_file, width=12).pack(side="left", padx=(0, 5))
-        Button(btn_frame, text="Удалить", command=delete_file, width=12, fg="#b00020").pack(side="left", padx=5)
-        Button(btn_frame, text="Закрыть", command=new_window.destroy, width=12).pack(side="right")
 
     def open_file(self, evt):
         my_path = askopenfilename(filetypes=(('.rar', '*.rar'), ('Any', '*')), multiple=True)
