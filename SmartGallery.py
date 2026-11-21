@@ -8,13 +8,15 @@ import os
 
 from PIL import Image, ImageTk
 
+import shutil
+
 import tkinter
 import tkinter.ttk
 import tkinter.messagebox
 from tkinter.filedialog import askopenfilename, askdirectory
 from tkinter import simpledialog, filedialog
 from tkinter.constants import END
-from tkinter import Tk, Toplevel, Label
+from tkinter import Tk, Toplevel, Label, Button, Frame, messagebox
 
 # rarfile.UNRAR_TOOL = r"C:\Users\boris\PycharmProjects\Rar_extractor\.venv\UnRAR.exe"
 #rarfile.UNRAR_TOOL = r"C:\Python313\UnRAR.exe"
@@ -116,6 +118,115 @@ class Application(tkinter.ttk.Frame):
         unzip_btn.pack(side="right", padx=(0, 10), pady=15)
 
     def open_image_in_new_window(self, evt=None):
+        file_paths = filedialog.askopenfilenames(
+            filetypes=(("Изображения", "*.jpg;*.jpeg;*.png"), ("Все файлы", "*.*"))
+        )
+        if not file_paths:
+            return
+
+        if len(file_paths) > 8:
+            messagebox.showwarning(
+                "Предупреждение",
+                f"Выбрано {len(file_paths)} файлов.\nБудут открыты только первые 8."
+            )
+
+        for file_path in file_paths[:8]:
+            self._create_image_window(file_path)
+
+    def _create_image_window(self, file_path):
+        new_window = Toplevel()
+        new_window.title(os.path.basename(file_path))
+
+        # --- НАСТРОЙКА ПОЗИЦИИ ОКНА (СЕТКА 4x2) ---
+        if not hasattr(self, "window_count"):
+            self.window_count = 0
+
+        cols = 4
+        rows = 2
+
+        col = self.window_count % cols
+        row = (self.window_count // cols) % rows
+
+        screen_w = new_window.winfo_screenwidth()
+        screen_h = new_window.winfo_screenheight() - 60
+
+        cell_w = screen_w // cols
+        cell_h = screen_h // rows
+
+        x = col * cell_w
+        y = row * cell_h
+
+        new_window.geometry(f"+{x}+{y}")
+        self.window_count += 1
+        # -----------------------------------------
+
+        # 1. Получаем данные и масштабируем фото под ячейку
+        with Image.open(file_path) as img:
+            orig_width, orig_height = img.size
+            img_format = img.format
+            file_size_kb = round(os.path.getsize(file_path) / 1024, 1)
+
+            max_img_w = max(150, cell_w - 20)
+            max_img_h = max(150, cell_h - 165)
+
+            img.thumbnail((max_img_w, max_img_h))
+            photo = ImageTk.PhotoImage(img)
+
+        img_label = Label(new_window, image=photo)
+        img_label.image = photo
+        img_label.pack(padx=10, pady=(5, 5))
+
+        # 2. Информация
+        short_path = file_path if len(file_path) < 38 else "..." + file_path[-35:]
+        info_text = (
+            f"Файл: {os.path.basename(file_path)}\n"
+            f"Путь: {short_path}\n"
+            f"Размер: {orig_width}×{orig_height} px | {img_format} | {file_size_kb} КБ"
+        )
+
+        info_label = Label(
+            new_window,
+            text=info_text,
+            font=("Arial", 8),
+            fg="#222222",
+            justify="left",
+            anchor="w"
+        )
+        info_label.pack(fill="x", padx=10, pady=(0, 5))
+
+        # 3. Функции для кнопок
+        # Важно: передаем path=file_path по умолчанию, чтобы в цикле каждая кнопка помнила СВОЙ файл
+        def move_file(path=file_path, win=new_window):
+            target_dir = filedialog.askdirectory(title="Выберите папку", parent=win)
+            if not target_dir:
+                return
+            try:
+                shutil.move(path, os.path.join(target_dir, os.path.basename(path)))
+                win.destroy()
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось переместить:\n{e}", parent=win)
+
+        def delete_file(path=file_path, win=new_window):
+            if messagebox.askyesno("Подтверждение", f"Удалить {os.path.basename(path)}?", parent=win):
+                try:
+                    os.remove(path)
+                    win.destroy()
+                except Exception as e:
+                    messagebox.showerror("Ошибка", f"Не удалось удалить:\n{e}", parent=win)
+
+        # 4. Кнопки
+        btn_frame = Frame(new_window)
+        btn_frame.pack(fill="x", padx=10, pady=(0, 8))
+
+        Button(btn_frame, text="Переместить", command=move_file, font=("Arial", 8), width=11).pack(side="left",
+                                                                                                   padx=(0, 3))
+        Button(btn_frame, text="Удалить", command=delete_file, font=("Arial", 8), width=8, fg="#b00020").pack(
+            side="left", padx=3)
+        Button(btn_frame, text="Закрыть", command=new_window.destroy, font=("Arial", 8), width=8).pack(side="right")
+
+
+
+    def open_image_in_new_window_v1(self, evt=None):
         file_path = filedialog.askopenfilename(
             filetypes=(("Изображения", "*.jpg;*.jpeg;*.png"), ("Все файлы", "*.*"))
         )
@@ -123,16 +234,85 @@ class Application(tkinter.ttk.Frame):
             return
 
         new_window = Toplevel()
-        new_window.title(file_path)
 
-        # Открываем и масштабируем фото, чтобы оно поместилось на экран
+        # В заголовок лучше вывести только имя файла
+        # new_window.title(file_path)
+        new_window.title(os.path.basename(file_path))
+
+
+        # 1. Открываем фото и сразу собираем информацию об оригинале
         img = Image.open(file_path)
+
+        orig_width, orig_height = img.size
+        img_format = img.format
+        img_mode = img.mode  # Цветовая модель (RGB, RGBA, L и т.д.)
+        file_size_kb = round(os.path.getsize(file_path) / 1024, 1)
+
+        # 2. Масштабируем для отображения
         img.thumbnail((800, 600))
         photo = ImageTk.PhotoImage(img)
 
+        # 3. Выводим картинку
         label = Label(new_window, image=photo)
         label.image = photo  # Обязательно сохраняем ссылку, иначе картинка пропадет!
         label.pack(padx=10, pady=10)
+
+        # 3. Формируем многострочный текст с помощью \n
+        info_text = (
+            f"Имя файла: {os.path.basename(file_path)}\n"
+            f"Путь: {file_path}\n"
+            f"Разрешение: {orig_width} × {orig_height} px\n"
+            f"Формат и цвет: {img_format} ({img_mode})\n"
+            f"Размер на диске: {file_size_kb} КБ"
+        )
+
+        # 4. Выводим текст: justify выравнивает строки между собой, anchor прижимает блок влево
+        info_label = Label(
+            new_window,
+            text=info_text,
+            font=("Arial", 10),
+            fg="#222222",
+            justify="left",  # Выравнивание текста внутри блока по левому краю
+            anchor="w"  # Привязка самого текста к левой границе виджета
+        )
+        # fill="x" растягивает виджет на всю ширину окна, чтобы anchor="w" сработал
+        info_label.pack(fill="x", padx=15, pady=(5, 15))
+
+        # 4. Функции-обработчики для кнопок
+        def move_file():
+            # Открываем выбор новой папки (parent=new_window чтобы диалог не прятался за окном)
+            target_dir = filedialog.askdirectory(title="Выберите папку для перемещения", parent=new_window)
+            if not target_dir:
+                return
+            try:
+                new_path = os.path.join(target_dir, os.path.basename(file_path))
+                shutil.move(file_path, new_path)
+                messagebox.showinfo("Готово", f"Файл перемещен в:\n{target_dir}", parent=new_window)
+                new_window.destroy()  # Закрываем окно после перемещения
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось переместить файл:\n{e}", parent=new_window)
+
+        def delete_file():
+            # Спрашиваем подтверждение перед удалением
+            confirm = messagebox.askyesno(
+                "Подтверждение",
+                f"Точно удалить файл навсегда?\n{os.path.basename(file_path)}",
+                parent=new_window
+            )
+            if confirm:
+                try:
+                    os.remove(file_path)
+                    new_window.destroy()  # Закрываем окно после удаления
+                except Exception as e:
+                    messagebox.showerror("Ошибка", f"Не удалось удалить файл:\n{e}", parent=new_window)
+
+        # 5. Контейнер (Frame) для кнопок, чтобы они встали в одну линию
+        btn_frame = Frame(new_window)
+        btn_frame.pack(fill="x", padx=15, pady=(5, 15))
+
+        Button(btn_frame, text="Переместить", command=move_file, width=12).pack(side="left", padx=(0, 5))
+        Button(btn_frame, text="Удалить", command=delete_file, width=12, fg="#b00020").pack(side="left", padx=5)
+        Button(btn_frame, text="Закрыть", command=new_window.destroy, width=12).pack(side="right")
 
     def open_file(self, evt):
         my_path = askopenfilename(filetypes=(('.rar', '*.rar'), ('Any', '*')), multiple=True)
