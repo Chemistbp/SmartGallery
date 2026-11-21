@@ -201,23 +201,42 @@ class Application(tkinter.ttk.Frame):
         self.window_count += 1
         # ----------------------------------------------------
 
-        # 1. Получаем данные и подгоняем картинку строго под размер окна
-        with Image.open(file_path) as img:
-            orig_width, orig_height = img.size
-            img_format = img.format
-            file_size_kb = round(os.path.getsize(file_path) / 1024, 1)
-            exif_line = self._get_exif_summary(img)  # <-- Читаем EXIF до масштабирования
+        # 1. Загружаем ОРИГИНАЛ и сохраняем его в память (без блока with, чтобы объект жил пока открыто окно)
+        orig_img = Image.open(file_path)
+        orig_width, orig_height = orig_img.size
+        img_format = orig_img.format
+        file_size_kb = round(os.path.getsize(file_path) / 1024, 1)
+        exif_line = self._get_exif_summary(orig_img)
 
-            # Картинка не выйдет за пределы ширины win_w и оставит место для текста с кнопками (135px)
-            max_img_w = max(100, win_w - 20)
-            max_img_h = max(100, win_h - 155)
-
-            img.thumbnail((max_img_w, max_img_h))
-            photo = ImageTk.PhotoImage(img)
-
-        img_label = Label(new_window, image=photo)
-        img_label.image = photo
+        # 2. Создаем пустой Label для фото (саму картинку в него подставит функция ниже)
+        img_label = Label(new_window)
         img_label.pack(side="top", expand=True, fill="both", padx=10, pady=(5, 5))
+
+        # Запоминаем прошлый размер области, чтобы не перерисовывать картинку вхолостую
+        last_size = [0, 0]
+
+        def resize_image(event):
+            # Вычитаем отступы (padx=10 с двух сторон = 20px, pady=5 сверху и снизу = 10px)
+            avail_w = event.width - 20
+            avail_h = event.height - 10
+
+            # Игнорируем слишком мелкие размеры при инициализации и повторные вызовы с тем же размером
+            if avail_w < 50 or avail_h < 50 or [avail_w, avail_h] == last_size:
+                return
+            last_size[0], last_size[1] = avail_w, avail_h
+
+            # Делаем копию оригинала и подгоняем под текущий размер области (сохраняя пропорции)
+            resized = orig_img.copy()
+            resized.thumbnail((avail_w, avail_h), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(resized)
+
+            img_label.config(image=photo)
+            img_label.image = photo  # Обязательно обновляем ссылку
+
+        # Привязываем перерисовку к изменению размеров области img_label
+        img_label.bind("<Configure>", resize_image)
+
+
 
         # 2. Информация
         file_name = os.path.basename(file_path)
@@ -247,6 +266,7 @@ class Application(tkinter.ttk.Frame):
             target_dir = filedialog.askdirectory(title="Выберите папку", parent=win)
             if not target_dir:
                 return
+            orig_img.close()
             try:
                 shutil.move(path, os.path.join(target_dir, os.path.basename(path)))
                 win.destroy()
@@ -255,6 +275,7 @@ class Application(tkinter.ttk.Frame):
 
         def delete_file(path=file_path, win=new_window):
             if messagebox.askyesno("Подтверждение", f"Удалить {os.path.basename(path)}?", parent=win):
+                orig_img.close()
                 try:
                     os.remove(path)
                     win.destroy()
