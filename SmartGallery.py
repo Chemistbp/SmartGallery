@@ -1,4 +1,4 @@
-# This is a sample Python script.
+# New branch
 
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
@@ -161,23 +161,7 @@ class Application(tkinter.ttk.Frame):
         for i, j in enumerate(self.tree.get_children('')):
             path = self.tree.item(j)["values"][0]
             print(path)
-            try:
-                with rarfile.RarFile(path) as opened_rar:
-                    if opened_rar.needs_password():
-                        password = simpledialog.askstring("Пароль", f"Введите пароль для {os.path.basename(path)}:",
-                                                          show='*')
-                        if not password:
-                            continue  # Пропускаем архив, если пользователь нажал «Отмена»
-                        opened_rar.setpassword(password)
 
-                    opened_rar.extractall(self.directory_path_var.get())
-                    self.value_var_prog.set(i + 1)
-                    root.update_idletasks()
-
-            except rarfile.BadRarFile:
-                tkinter.messagebox.showerror("Ошибка", f"Неверный пароль или поврежденный архив:\n{path}")
-            except Exception as e:
-                tkinter.messagebox.showerror("Ошибка распаковки", str(e))
 
         tkinter.messagebox.showinfo("Info", "Done!")
         self.value_var_prog.set(0)
