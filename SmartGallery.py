@@ -3,10 +3,15 @@
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
 
+import imagehash
+
+from pathlib import Path
+
+import sqlite3
 
 import os
 
-from PIL import Image, ImageTk, ExifTags
+from PIL import Image, ImageFile, ImageTk, ExifTags
 
 import shutil
 
@@ -18,8 +23,14 @@ from tkinter import simpledialog, filedialog
 from tkinter.constants import END
 from tkinter import Tk, Toplevel, Label, Button, Frame, messagebox
 
-# rarfile.UNRAR_TOOL = r"C:\Users\boris\PycharmProjects\Rar_extractor\.venv\UnRAR.exe"
-#rarfile.UNRAR_TOOL = r"C:\Python313\UnRAR.exe"
+# 1.1 Импортируем поддержку формата HEIC (с айфонов)
+from pillow_heif import register_heif_opener
+
+# 1.2 Регистрируем плагин в Pillow
+register_heif_opener()
+
+# Разрешаем Pillow читать поврежденные/недокачанные файлы
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class Application(tkinter.ttk.Frame):
@@ -35,12 +46,12 @@ class Application(tkinter.ttk.Frame):
         self.value_var_prog = None
 
         self.create_widgets()
-        self.master.title("Unzip RAR")
+        self.master.title("Smart gallery")
         self.master.resizable(True, True)
         self.master.geometry("460x550+200+200")
 
     def create_widgets(self):
-        archive_frame = tkinter.ttk.LabelFrame(self, text="RAR Archive")
+        archive_frame = tkinter.ttk.LabelFrame(self, text="Open DB")
         archive_frame.pack(fill="x", padx=10, pady=3)
         # Даем колонке 0 (где лежит Entry) вес 1.
         # По умолчанию вес (weight) всех колонок равен 0, поэтому ячейки сжимаются до минимально возможного размера
