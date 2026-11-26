@@ -68,7 +68,7 @@ class Application(tkinter.ttk.Frame):
         open_btn.bind("<ButtonRelease>", self.open_image_in_new_window)
         open_btn.grid(column=1, row=0, padx=(0, 10), pady=(5, 15))
 
-        output_frame = tkinter.ttk.LabelFrame(self, text="Output Folder")
+        output_frame = tkinter.ttk.LabelFrame(self, text="Папка с фотографиями")
         output_frame.pack(fill="x", padx=10, pady=3)
         output_frame.columnconfigure(0, weight=1)
 
@@ -76,7 +76,7 @@ class Application(tkinter.ttk.Frame):
                                                  state="disabled")
         directory_path_entry.grid(column=0, row=0, padx=(0, 10), pady=(5, 15), sticky="ew")
 
-        select_btn = tkinter.ttk.Button(output_frame, text="Select")
+        select_btn = tkinter.ttk.Button(output_frame, text="Выбрать")
         select_btn.bind("<ButtonRelease>", self.select_folder)
         select_btn.grid(column=1, row=0, padx=(0, 10), pady=(5, 15))
 
@@ -118,22 +118,28 @@ class Application(tkinter.ttk.Frame):
 
         # Кнопка Close (будет самой правой)
         close_btn = tkinter.ttk.Button(self)
-        close_btn["text"] = "Close"
+        close_btn["text"] = "Закрыть"
         close_btn["command"] = root.destroy
         close_btn.pack(side="right", padx=(0, 20), pady=15)
 
-        # Кнопка Unzip (встанет левее кнопки Close)
-        unzip_btn = tkinter.ttk.Button(self)
-        unzip_btn.bind("<ButtonRelease>", self.unzip)
-        unzip_btn["text"] = "Unzip"
-        unzip_btn.pack(side="right", padx=(0, 10), pady=15)
+        # Кнопка "Сканировать" (встанет левее кнопки Close)
+        scan_btn = tkinter.ttk.Button(self)
+        scan_btn.bind("<ButtonRelease>", self.scan)
+        scan_btn["text"] = "Сканировать"
+        scan_btn.pack(side="right", padx=(0, 10), pady=15)
 
-    def open_image_in_new_window(self, evt=None):
-        file_paths = filedialog.askopenfilenames(
-            filetypes=(("Изображения", "*.jpg;*.jpeg;*.png"), ("Все файлы", "*.*"))
-        )
-        if not file_paths:
-            return
+        # Кнопка "Поиск дублей" (встанет левее кнопки Сканировать)
+        find_dupl_btn = tkinter.ttk.Button(self)
+        find_dupl_btn.bind("<ButtonRelease>", self.find_dupl)
+        find_dupl_btn["text"] = "Поиск дублей"
+        find_dupl_btn.pack(side="right", padx=(0, 10), pady=15)
+
+    def open_image_in_new_window(self, file_paths):
+        #file_paths = filedialog.askopenfilenames(
+        #    filetypes=(("Изображения", "*.jpg;*.jpeg;*.png;*.heic"), ("Все файлы", "*.*"))
+        #)
+        #if not file_paths:
+        #    return
 
         # Сбрасываем счетчик сетки в 0, чтобы окна всегда начинались с левого верхнего угла
         self.window_count = 0
@@ -329,15 +335,192 @@ class Application(tkinter.ttk.Frame):
         if selected_dir:
             self.directory_path_var.set(os.path.normpath(selected_dir))
 
-    def unzip(self, evt):
-        self.progressbar['maximum'] = len(self.tree.get_children(''))
-        for i, j in enumerate(self.tree.get_children('')):
-            path = self.tree.item(j)["values"][0]
-            print(path)
+    def check_db_exists(self, folder_path):
+        if not folder_path or not os.path.isdir(folder_path):
+            return None
+        for filename in os.listdir(folder_path):
+            if filename.lower().endswith(".db"):
+                return filename  # Возвращаем имя найденного файла
+        return None
+
+    def _ask_db_action(self, filename):
+        """Создает кастомное окно с нужными кнопками и ждет выбора пользователя"""
+        dialog = Toplevel(self.master)
+        dialog.title("База данных уже существует")
+        dialog.resizable(False, False)
+        dialog.grab_set()  # Блокируем главное окно, пока пользователь не нажмет кнопку
+
+        # Центрируем окно поверх главного
+        x = self.master.winfo_x() + 50
+        y = self.master.winfo_y() + 150
+        dialog.geometry(f"+{x}+{y}")
+
+        # Переменная для хранения результата нажатия
+        user_choice = tkinter.StringVar(value="cancel")
+
+        def choose(action):
+            user_choice.set(action)
+            dialog.destroy()
+
+        # Текст сообщения
+        Label(
+            dialog,
+            text=f"В этой папке уже найден файл:\n{filename}\n\nЧто вы хотите сделать?",
+            justify="left",
+            padx=20,
+            pady=15
+        ).pack()
+
+        # Контейнер для кнопок
+        btn_frame = Frame(dialog)
+        btn_frame.pack(padx=15, pady=(0, 15))
+
+        Button(
+            btn_frame,
+            text="Перезаписать",
+            width=14,
+            command=lambda: choose("overwrite")
+        ).pack(side="left", padx=5)
+
+        Button(
+            btn_frame,
+            text="Дополнить",
+            width=14,
+            command=lambda: choose("append")
+        ).pack(side="left", padx=5)
+
+        Button(
+            btn_frame,
+            text="Отмена",
+            width=10,
+            command=lambda: choose("cancel")
+        ).pack(side="left", padx=5)
+
+        # Ждем, пока окно не закроется
+        self.master.wait_window(dialog)
+        return user_choice.get()
+    def make_db(self, folder_path):
+        folder_path = Path(folder_path)
+        db_path = folder_path / "SG.db"
+        # Подключаемся к базе данных (если файла нет, он создастся автоматически)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Создаем таблицу для хранения путей и хэшей (если она еще не создана)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS file_hashes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT UNIQUE,
+            image_hash TEXT
+        )
+        """)
+        conn.commit()
+
+        # Укажите путь к вашей папке (можно относительный или абсолютный)
+        #folder_path = Path("/content")
 
 
-        tkinter.messagebox.showinfo("Info", "Done!")
-        self.value_var_prog.set(0)
+        # Задаем кортеж нужных расширений (обязательно с точкой и в нижнем регистре)
+        valid_extensions = ('.jpg', '.jpeg', '.png', '.heic')
+
+        data_to_insert = []
+
+        # Ищем все файлы и фильтруем их
+        for file_path in folder_path.rglob('*'):
+            if file_path.suffix.lower() in valid_extensions:
+                print(f"Найден нужный файл: {file_path}")
+                try:
+                    with Image.open(file_path) as img:
+                        # Считаем хэш и сразу переводим его в строку
+                        h_str = str(imagehash.phash(img))
+
+                        # Сохраняем абсолютный путь (строкой) и хэш-строку
+                        data_to_insert.append((str(file_path.resolve()), h_str))
+
+                except Exception as e:
+                    print(f"Ошибка при обработке файла {file_path}: {e}")
+
+        # 4. Массово записываем данные в базу данных
+        # Используем INSERT OR IGNORE, чтобы не было ошибок, если файл уже есть в базе (благодаря UNIQUE)
+        cursor.executemany("""
+        INSERT OR IGNORE INTO file_hashes (file_path, image_hash)
+        VALUES (?, ?)
+        """, data_to_insert)
+
+        # Подтверждаем изменения и закрываем соединение
+        conn.commit()
+        conn.close()
+
+        print(f"Успешно обработано и сохранено записей: {len(data_to_insert)}")
+
+    def find_exact_duplicates(self, db_path):
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Проверяем, какие таблицы вообще есть в этом файле
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        print("Таблицы в базе:", cursor.fetchall())
+
+        # Находим хэши, которые встречаются в таблице больше одного раза
+        cursor.execute("""
+           SELECT image_hash, GROUP_CONCAT(file_path, ' | ')
+           FROM file_hashes
+           GROUP BY image_hash
+           HAVING COUNT(*) > 1
+           """)
+
+        results = cursor.fetchall()
+        conn.close()
+
+        # Превращаем результат в список групп путей
+        duplicates = [paths.split(' | ') for _, paths in results]
+        return duplicates
+    def scan(self, evt):
+        folder_path = self.directory_path_var.get()
+        if not folder_path:
+            messagebox.showwarning("Внимание", "Сначала выберите папку с фотографиями!")
+            return
+
+        filename = self.check_db_exists(folder_path)
+
+        if filename:
+            # Вызываем наше окно с кнопками и получаем ответ
+            action = self._ask_db_action(filename)
+
+            if action == "overwrite":
+                print(f"Удаляем старую {filename} и создаем заново...")
+            elif action == "append":
+                print(f"Открываем {filename} и дописываем новые фото...")
+            else:
+                print("Сканирование отменено пользователем.")
+                return
+        else:
+            self.make_db(folder_path)
+            messagebox.showinfo("Info", "Новая база создана!")
+        #self.progressbar['maximum'] = len(self.tree.get_children(''))
+        #for i, j in enumerate(self.tree.get_children('')):
+            #path = self.tree.item(j)["values"][0]
+            #print(path)
+    def find_dupl(self, evt):
+        folder_path = self.directory_path_var.get()
+        if not folder_path:
+            messagebox.showwarning("Внимание", "Сначала выберите папку с фотографиями!")
+            return
+
+        file_name = self.check_db_exists(folder_path)
+        # Объединяем путь и имя файла
+        full_path = Path(folder_path) / file_name
+        print(full_path)
+        if file_name:
+            arr = self.find_exact_duplicates(full_path)
+
+            print(arr)
+            for i in arr:
+                self.open_image_in_new_window(i)
+                messagebox.showwarning("Вопрос", "Следующее фото?")
+
+
+
 
 
 if __name__ == '__main__':
